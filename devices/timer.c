@@ -24,17 +24,22 @@ static int64_t ticks;
    Initialized by timer_calibrate(). */
 static unsigned loops_per_tick;
 
+/* List of all sleeping processes. It is used as an ordered list */
+static struct list sleep_list;
+
 static intr_handler_func timer_interrupt;
 static bool too_many_loops (unsigned loops);
 static void busy_wait (int64_t loops);
 static void real_time_sleep (int64_t num, int32_t denom);
 static void real_time_delay (int64_t num, int32_t denom);
+static void check_sleeping_threads(void);
 
 /* Sets up the timer to interrupt TIMER_FREQ times per second,
    and registers the corresponding interrupt. */
 void
 timer_init (void) 
 {
+  list_init(&sleep_list);
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
 }
@@ -66,10 +71,13 @@ timer_calibrate (void)
   printf ("%'"PRIu64" loops/s.\n", (uint64_t) loops_per_tick * TIMER_FREQ);
 }
 
+
+
 /* Returns the number of timer ticks since the OS booted. */
 int64_t
 timer_ticks (void) 
 {
+
   enum intr_level old_level = intr_disable ();
   int64_t t = ticks;
   intr_set_level (old_level);
@@ -84,16 +92,31 @@ timer_elapsed (int64_t then)
   return timer_ticks () - then;
 }
 
+
+
 /* Sleeps for approximately TICKS timer ticks.  Interrupts must
    be turned on. */
 void
 timer_sleep (int64_t ticks) 
 {
-  int64_t start = timer_ticks ();
+
+  struct thread *curr_thread;
+  enum intr_level old_level;
 
   ASSERT (intr_get_level () == INTR_ON);
-  while (timer_elapsed (start) < ticks) 
-    thread_yield ();
+
+  curr_thread = thread_current ();
+
+  curr_thread->waketick = ticks + timer_ticks ();;
+  
+  list_insert_ordered (&sleep_list, &curr_thread->elem, will_run_first, NULL);  
+  
+  old_level = intr_disable ();
+
+  thread_block();
+
+  intr_set_level (old_level);
+
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -165,13 +188,46 @@ timer_print_stats (void)
 {
   printf ("Timer: %"PRId64" ticks\n", timer_ticks ());
 }
+
+/* Unblocks all sleeping threads whose sleep delay has passed
+    and removes them from the sleeping thread's list. */
+static void
+check_sleeping_threads(void)
+{
+  if(list_empty(&sleep_list))
+    return;
+
+  struct thread *t;
+  struct list_elem *curr_elem;
+
+
+  while (!list_empty(&sleep_list))
+  {
+    curr_elem = list_front(&sleep_list);
+
+    t = list_entry(curr_elem, struct thread, elem);
+
+    if (t->waketick >= timer_ticks() )
+      break;
+
+    list_pop_front(&sleep_list);
+
+    thread_unblock(t);
+  }
+
+
+}
+
 
 /* Timer interrupt handler. */
 static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
+  
   ticks++;
+  check_sleeping_threads ();
   thread_tick ();
+
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer

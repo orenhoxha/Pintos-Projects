@@ -28,6 +28,7 @@ static struct list ready_list;
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
 
+
 /* Idle thread. */
 static struct thread *idle_thread;
 
@@ -92,6 +93,7 @@ thread_init (void)
   lock_init (&tid_lock);
   list_init (&ready_list);
   list_init (&all_list);
+  
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -117,11 +119,16 @@ thread_start (void)
   sema_down (&idle_started);
 }
 
+
+
+
 /* Called by the timer interrupt handler at each timer tick.
    Thus, this function runs in an external interrupt context. */
 void
 thread_tick (void) 
 {
+
+
   struct thread *t = thread_current ();
 
   /* Update statistics. */
@@ -585,3 +592,20 @@ allocate_tid (void)
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
+
+/* Compares thwo threads in a list and return true if the 
+  first thread's 'waketime' is smaller than the second
+  It is used to insert a thread in the right place in the 
+  ordered list of sleeping threads in 'time.c'. */
+bool
+will_run_first(const struct list_elem* t1,const struct list_elem* t2, void* aux UNUSED)
+{
+  ASSERT (t1 != NULL);
+  ASSERT (t2 != NULL);
+
+  struct thread * t11 = list_entry(t1, struct thread, elem);
+  struct thread * t22 = list_entry(t2, struct thread, elem);
+
+  return t11->waketick < t22->waketick;
+
+}
